@@ -14,7 +14,7 @@ def rtp_echo_server(server_ip, rtp_port, remote_sdp, stop_event):
         print("Invalid SDP, RTP not started")
         return
 
-    print(f"RTP echo on {server_ip}:{rtp_port}")
+    print(f"RTP echo listening on {server_ip}:{rtp_port}")
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((server_ip, rtp_port))
@@ -30,4 +30,4 @@ def rtp_echo_server(server_ip, rtp_port, remote_sdp, stop_event):
         sock.sendto(data, addr)
 
     sock.close()
-    print("RTP stopped")
+    print(f"RTP stopped on port {rtp_port}")
