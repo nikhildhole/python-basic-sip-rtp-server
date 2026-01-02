@@ -1,0 +1,224 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+permissions:
+  contents: write
+  packages: write
+  security-events: write
+  actions: read
+  id-token: write
+
+jobs:
+  codeql:
+    name: CodeQL Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  lint:
+    name: Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+
+      - name: Run Linting
+        run: |
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all errors as warnings.
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run Tests
+        run: |
+          pytest
+
+  release:
+    name: Release & Versioning
+    if: github.event_name == 'push'
+    needs: [codeql, lint, test]
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.version.outputs.new_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate and Push Version
+        id: version
+        run: |
+          git fetch --tags
+          
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          echo "Current branch: $BRANCH_NAME"
+          
+          # Determine tag prefix and pattern
+          if [ "$BRANCH_NAME" = "main" ]; then
+            PREFIX="v"
+            PATTERN="v*"
+          else
+            PREFIX="dev-"
+            PATTERN="dev-*"
+          fi
+          
+          # Get latest tag for this pattern
+          LATEST_TAG=$(git tag -l "$PATTERN" | sort -V | tail -n1)
+          
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="${PREFIX}0.0.0"
+            echo "No existing tag found. Starting at $LATEST_TAG"
+          else
+            echo "Latest tag found: $LATEST_TAG"
+          fi
+          
+          # Extract version numbers
+          # Remove prefix
+          VERSION_CORE=${LATEST_TAG#$PREFIX}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_CORE"
+          
+          # Default to patch bump
+          BUMP="patch"
+          
+          # Analyze commits since latest tag
+          # If it's a new tag (0.0.0), we check all commits or just bump to 0.0.1/0.1.0? 
+          # Let's assume we check commits. If no previous tag, we might just start at 0.0.1 or 0.1.0 based on commits.
+          
+          if [ "$LATEST_TAG" = "${PREFIX}0.0.0" ] && [ -z "$(git tag -l "$PATTERN")" ]; then
+             # First run ever for this branch
+             LOG_RANGE="HEAD" 
+             # Actually git log HEAD works to show history.
+             # But we need to be careful not to double count if we merge.
+             # For simplicity, if no tag, just analyze recent history or default to 0.1.0
+             LOGS=$(git log --pretty=format:"%s")
+          else
+             LOGS=$(git log $LATEST_TAG..HEAD --pretty=format:"%s")
+          fi
+          
+          if echo "$LOGS" | grep -q "BREAKING CHANGE"; then
+            BUMP="major"
+          elif echo "$LOGS" | grep -q "^feat"; then
+            BUMP="minor"
+          fi
+          
+          echo "Bump type: $BUMP"
+          
+          if [ "$BUMP" = "major" ]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [ "$BUMP" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+          
+          NEW_TAG="${PREFIX}${MAJOR}.${MINOR}.${PATCH}"
+          echo "New tag: $NEW_TAG"
+          echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          
+          # Configure git
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          # Create and push tag
+          git tag $NEW_TAG
+          git push origin $NEW_TAG
+
+  docker:
+    name: Docker Build & Push
+    needs: [release]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ needs.release.outputs.new_tag }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ needs.release.outputs.new_tag }}
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
