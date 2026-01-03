@@ -14,7 +14,7 @@ A lightweight, containerized SIP Echo Server written in Python. It handles SIP s
 
 - Python 3.x (Standard library only)
 - Docker (Optional)
-- Kubernetes / Minikube (Optional)
+
 
 ## Local Development
 
@@ -63,25 +63,6 @@ The server relies on standard Python libraries. To run it locally:
 - **OPTIONS / UPDATE**: Responded with `200 OK`.
 - **REGISTER**: Responded with `405 Method Not Allowed`.
 
-## Deployment
-
-### Kubernetes (Minikube)
-
-To deploy this server on a local Minikube cluster:
-
-1. **Start Minikube**:
-   ```bash
-   minikube start
-   ```
-
-2. **Deploy**:
-   Ensure you have a valid `deploy.yaml` (Kubernetes manifest) defining your Deployment and Service.
-   ```bash
-   kubectl apply -f deploy.yaml
-   ```
-
-3. **Access**:
-   Use `minikube tunnel` or `NodePort` depending on your service configuration to access the SIP server.
 
 ## Continuous Integration
 
