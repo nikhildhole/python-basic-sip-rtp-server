@@ -19,6 +19,9 @@ class SIPMessage:
             return
 
         self.start_line = lines[0]
+        if "SIP/2.0" not in self.start_line:
+            return
+
         self.valid = True
 
         for line in lines[1:]:

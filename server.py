@@ -1,15 +1,20 @@
 import socket
 import threading
+import os
 from sip_message import SIPMessage
 from sip_response import SIPResponse
 from rtp import rtp_echo_server
 from sip_utils import get_called_number, get_caller_number  
 
-SERVER_IP = "127.0.0.1"   # change to LAN IP if needed
+# BIND_IP is where we listen (0.0.0.0 for containers)
+SERVER_IP = os.getenv("BIND_IP", "0.0.0.0")
+# ADVERTISED_IP is what we tell clients (e.g. LoadBalancer IP, Node IP, or Pod IP)
+ADVERTISED_IP = os.getenv("ADVERTISED_IP", "127.0.0.1")
+
 SIP_PORT = 5060
 
-RTP_PORT_START = 40000
-RTP_PORT_END = 41000
+RTP_PORT_START = 30000
+RTP_PORT_END = 30010
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((SERVER_IP, SIP_PORT))
@@ -96,10 +101,10 @@ while True:
 
         # new call
         rtp_port = allocate_rtp_port()
-        sdp = build_sdp(SERVER_IP, rtp_port)
+        sdp = build_sdp(ADVERTISED_IP, rtp_port)
 
         resp = SIPResponse(200, "OK", msg)
-        resp.headers["contact"] = f"<sip:echo@{SERVER_IP}:{SIP_PORT}>"
+        resp.headers["contact"] = f"<sip:echo@{ADVERTISED_IP}:{SIP_PORT}>"
         resp.headers["content-type"] = "application/sdp"
         resp.headers["content-length"] = str(len(sdp))
         resp.body = sdp
